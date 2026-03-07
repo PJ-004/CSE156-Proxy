@@ -72,6 +72,15 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 
+	// Open forbidden-sites file
+
+	// Open log file
+	FILE *log_fd = fopen(log_file, "a");
+	if (log_fd == NULL) {
+		fprintf(stderr, "Unable to open log file: %s\n", log_file);
+		return EXIT_FAILURE;
+	}
+
 	// Allow immediate reuse of the port after restart
 	int optval = 1;
 	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
@@ -119,7 +128,9 @@ int main(int argc, char *argv[]) {
 		get_timestamp(time_buf);
 		char *end_of_response_string = strchr(request_line, '\r');
 		end_of_response_string[0] = '\0';
-		printf("%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), request_line, http_status, response_size);
+		// date client_ip "request_line" http_status response_size
+		fprintf(log_fd, "%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), request_line, http_status, response_size);
+		fflush(log_fd);
 		end_of_response_string[0] = '\r';
 
 		const struct addrinfo hints = {
@@ -190,7 +201,8 @@ int main(int argc, char *argv[]) {
 		close(client_fd);
 	}
 
-	close(server_fd);	
+	close(server_fd);
+	fclose(log_fd);
 
 	return EXIT_SUCCESS;
 }
