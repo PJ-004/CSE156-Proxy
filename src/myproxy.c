@@ -55,6 +55,16 @@ void create_forbidden_sites_list(FILE *forbidden_fd, forbidden_sites_list *list)
 	printf("List len: %lu\n", list->len);
 }
 
+void make_response_string(char *response, size_t *response_size, int http_status) {
+	switch (http_status) {
+		case FORBIDDEN:
+			*response_size = snprintf(response, *response_size, "HTTP/1.1 %d Forbidden\r\n", FORBIDDEN);
+			break;
+		default:
+			break;
+	}
+}
+
 int check_if_forbidden(forbidden_sites_list *list, char *url) {
 	if (url == NULL || url == NULL + 1) {
 		fprintf(stderr, "Incorrect URL\n");
@@ -159,6 +169,10 @@ int main(int argc, char *argv[]) {
 
 	// 5. Main Server Loop
 	while (1) {
+		char response[4096];
+		ssize_t bytes_recv, response_size;
+		char site_body[4096];
+
 		int http_status = 200;
 		struct sockaddr_in client_addr;
 		socklen_t addr_len = sizeof(client_addr);
@@ -171,7 +185,7 @@ int main(int argc, char *argv[]) {
 
 		// Read the request (we just clear the buffer for this simple example)
 		char request_line[BUFFER_SIZE];
-		ssize_t response_size = read(client_fd, request_line, BUFFER_SIZE - 1);
+		response_size = read(client_fd, request_line, BUFFER_SIZE - 1);
 		request_line[response_size] = '\0';
 
 		char time_buf[32];
@@ -184,76 +198,78 @@ int main(int argc, char *argv[]) {
 		fflush(log_fd);
 
 		if (check_if_forbidden(&list, strchr(request_line, ' ') + 1)) {
-			printf("Skipping returning the request\n");
-
-			continue;
-		}
-
-		end_of_response_string[0] = '\r';
-
-		const struct addrinfo hints = {
-			.ai_family = AF_INET,
-			.ai_socktype = SOCK_STREAM,
-		};
-		struct addrinfo *result;
-		struct in_addr *addr;
-
-		char hostname[] = "www.google.com";
-		char port_str[] = "80";
-		int status = getaddrinfo(hostname, port_str, &hints, &result);
-
-		if (status != 0) {
-			if (status == EAI_SERVICE) {
-				fprintf(stderr, "Invalid Port\n");
-				http_status = BAD_REQUEST;
-			}
-
-			if (status == EAI_NONAME || status == EAI_NONAME) {
-				fprintf(stderr, "Error: Hostname '%s' does not exist.\n", hostname);
-				http_status = BAD_GATEWAY;
-			} else if (status == EAI_FAMILY) {
-				fprintf(stderr, "Error: Invalid IP address format.\n");
-				http_status = NOT_IMPLEMENTED;
-			} else {
-				fprintf(stderr, "DNS Resolution Error: %s\n", gai_strerror(status));
-				http_status = BAD_REQUEST;
-			}
-
+			printf("Forbidden website, returning response 403 Forbidden\n");
+			http_status = FORBIDDEN;
+			response_size = sizeof(response);
+			make_response_string(response, &response_size, http_status);
 		} else {
-			// 6. Make a new socket for forwarding requests
-			int request_fd = socket(AF_INET, SOCK_STREAM, 0);
-			if (request_fd < 0) {
-				perror("Socket creation failed");
-				http_status = BAD_GATEWAY;
-			}
-			if (connect(request_fd, result->ai_addr, result->ai_addrlen) != 0) {
-				http_status = BAD_REQUEST;
-				printf("Connect not OK\n");
-			} else {
-				http_status = REQUEST_OK;
-				printf("Connect OK\n");
-			}
+			end_of_response_string[0] = '\r';
 
-			if (send(request_fd, request_line, response_size, 0) < 0) {
-				perror("Failed to send request\n");
-				close(request_fd);
-				http_status = GATEWAY_TIMEOUT;
-			} else {
-				char response_from_site[4096];
-				char site_body[4096];
+			const struct addrinfo hints = {
+				.ai_family = AF_INET,
+				.ai_socktype = SOCK_STREAM,
+			};
+			struct addrinfo *result;
+			struct in_addr *addr;
 
-				int bytes_recv = recv(request_fd, response_from_site, sizeof(response_from_site) - 1, 0);
-				if (bytes_recv >= 0) {
-					response_from_site[bytes_recv] = '\0';
+			char hostname[] = "www.google.com";
+			char port_str[] = "80";
+			int status = getaddrinfo(hostname, port_str, &hints, &result);
+
+			if (status != 0) {
+				if (status == EAI_SERVICE) {
+					fprintf(stderr, "Invalid Port\n");
+					http_status = BAD_REQUEST;
 				}
 
-				printf("%s\n", response_from_site);
-				write(client_fd, response_from_site, bytes_recv);
+				if (status == EAI_NONAME || status == EAI_NONAME) {
+					fprintf(stderr, "Error: Hostname '%s' does not exist.\n", hostname);
+					http_status = BAD_GATEWAY;
+				} else if (status == EAI_FAMILY) {
+					fprintf(stderr, "Error: Invalid IP address format.\n");
+					http_status = NOT_IMPLEMENTED;
+				} else {
+					fprintf(stderr, "DNS Resolution Error: %s\n", gai_strerror(status));
+					http_status = BAD_REQUEST;
+				}
+
+			} else {
+				// 6. Make a new socket for forwarding requests
+				int request_fd = socket(AF_INET, SOCK_STREAM, 0);
+				if (request_fd < 0) {
+					perror("Socket creation failed");
+					http_status = BAD_GATEWAY;
+				}
+				if (connect(request_fd, result->ai_addr, result->ai_addrlen) != 0) {
+					http_status = BAD_REQUEST;
+					printf("Connect not OK\n");
+				} else {
+					http_status = REQUEST_OK;
+					printf("Connect OK\n");
+				}
+
+				if (send(request_fd, request_line, response_size, 0) < 0) {
+					perror("Failed to send request\n");
+					close(request_fd);
+					http_status = GATEWAY_TIMEOUT;
+				} else {
+					bytes_recv = recv(request_fd, response, sizeof(response) - 1, 0);
+					if (bytes_recv >= 0) {
+						response[bytes_recv] = '\0';
+						response_size = bytes_recv;
+					} else {
+						// TODO: Send response in case recv failed
+					}
+				}
+				close(request_fd);
 			}
-			close(request_fd);
+
+			freeaddrinfo(result);
 		}
 
-		freeaddrinfo(result);
+		printf("%s\n", response);
+		write(client_fd, response, response_size);
+
 
 		// Close connection
 		close(client_fd);
