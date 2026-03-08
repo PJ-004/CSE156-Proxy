@@ -10,6 +10,8 @@
 #include <netinet/in.h>
 
 #define BUFFER_SIZE 2048
+#define MAX_FORBIDDEN_SITES 256
+#define MAX_URL_LEN 256
 
 // HTTP Error Codes
 #define REQUEST_OK 200
@@ -29,6 +31,47 @@ void get_timestamp(char *buf) {
 	struct tm *tm = gmtime(&ts.tv_sec);
 	strftime(buf, 30, "%Y-%m-%dT%H:%M:%S", tm);
 	sprintf(buf + strlen(buf), ".%03ldZ", ts.tv_nsec / 1000000);
+}
+
+typedef struct {
+	size_t len;
+	char sites[MAX_FORBIDDEN_SITES][MAX_URL_LEN];
+} forbidden_sites_list;
+
+void create_forbidden_sites_list(FILE *forbidden_fd, forbidden_sites_list *list) {
+	char line[MAX_URL_LEN];
+	size_t site_number = 0;
+	while (site_number < MAX_FORBIDDEN_SITES && fgets(line, sizeof(line), forbidden_fd) != NULL) {
+		if (line[0] != '#') {
+			strncpy(list->sites[site_number], line, strlen(line) - 1);
+			list->sites[site_number][strlen(line) - 1] = '\0';
+			printf("Added website %s to forbidden websites list\n", list->sites[site_number]);
+		} else {
+			continue;
+		}
+		site_number++;
+	}
+	list->len = site_number;
+	printf("List len: %lu\n", list->len);
+}
+
+int check_if_forbidden(forbidden_sites_list *list, char *url) {
+	if (url == NULL || url == NULL + 1) {
+		fprintf(stderr, "Incorrect URL\n");
+		return -1;
+	}
+
+	printf("\nChecking URL: '%s'\n\n", url);
+
+	for (size_t i = 0; i < list->len; i++) {
+		if (strstr(url, list->sites[i]) != NULL) {
+			printf("Forbidden URL found at %lu: '%s'\n", i, list->sites[i]);
+			return 1;
+		}
+	}
+
+	printf("Reached end of list, URL Allowed\n");
+	return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -73,6 +116,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Open forbidden-sites file
+	FILE *forbidden_fd = fopen(forbidden_file, "r");
+	if (forbidden_fd == NULL) {
+		fprintf(stderr, "Unable to open forbidden sites file: %s\n", forbidden_file);
+		return EXIT_FAILURE;
+	}
+
+	forbidden_sites_list list;
+	create_forbidden_sites_list(forbidden_fd, &list);
 
 	// Open log file
 	FILE *log_fd = fopen(log_file, "a");
@@ -131,6 +182,13 @@ int main(int argc, char *argv[]) {
 		// date client_ip "request_line" http_status response_size
 		fprintf(log_fd, "%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), request_line, http_status, response_size);
 		fflush(log_fd);
+
+		if (check_if_forbidden(&list, strchr(request_line, ' ') + 1)) {
+			printf("Skipping returning the request\n");
+
+			continue;
+		}
+
 		end_of_response_string[0] = '\r';
 
 		const struct addrinfo hints = {
