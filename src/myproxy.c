@@ -193,9 +193,6 @@ int main(int argc, char *argv[]) {
 		get_timestamp(time_buf);
 		char *end_of_response_string = strchr(request_line, '\r');
 		end_of_response_string[0] = '\0';
-		// date client_ip "request_line" http_status response_size
-		fprintf(log_fd, "%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), request_line, http_status, response_size);
-		fflush(log_fd);
 
 		if (check_if_forbidden(&list, strchr(request_line, ' ') + 1)) {
 			printf("Forbidden website, returning response 403 Forbidden\n");
@@ -266,6 +263,10 @@ int main(int argc, char *argv[]) {
 
 			freeaddrinfo(result);
 		}
+
+		// date client_ip "request_line" http_status response_size
+		fprintf(log_fd, "%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), request_line, http_status, response_size);
+		fflush(log_fd);
 
 		printf("%s\n", response);
 		write(client_fd, response, response_size);
