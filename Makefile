@@ -4,7 +4,7 @@ all: bin/myproxy
 
 bin/myproxy: src/myproxy.c
 	mkdir -p bin/
-	gcc src/myproxy.c -o bin/myproxy
+	gcc src/myproxy.c -lssl -lcrypto -o bin/myproxy
 
 clean:
 	rm -rf bin/*
