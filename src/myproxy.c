@@ -55,12 +55,49 @@ void create_forbidden_sites_list(FILE *forbidden_fd, forbidden_sites_list *list)
 	printf("List len: %lu\n", list->len);
 }
 
+typedef struct {
+	size_t request_size;
+	char request_line[BUFFER_SIZE];
+	char header[BUFFER_SIZE];
+	char method[5];
+	char domain[MAX_URL_LEN];
+} http_request;
+
+int make_request(http_request *req) {
+	req->request_line[req->request_size] = '\0';
+	//fprintf(stderr, "Request Line: %s\n", req->request_line);
+
+	char *end_of_response_string = strchr(req->request_line, '\r');
+	end_of_response_string[0] = '\0';
+	strcpy(req->header, req->request_line);
+	end_of_response_string[0] = '\r';
+	//fprintf(stderr, "Header: %s\n", req->header);
+
+	strcpy(req->domain, strchr(req->header, ' ') + 1);
+	strchr(req->domain, ' ')[0] = '\0';
+	//fprintf(stderr, "Domain: %s\n", req->domain);
+
+	char *end_of_method_string = strchr(req->header, ' ');
+	end_of_method_string[0] = '\0';
+	strncpy(req->method, req->header, sizeof(req->method));
+	end_of_method_string[0] = ' ';
+	//fprintf(stderr, "Method: %s\n", req->method);
+	//printf("Request Line: %s\nDomain Name: %s\nHeader: %s\n", req->request_line, req->domain, req->header);
+
+	return 0;
+}
+
 void make_response_string(char *response, size_t *response_size, int http_status) {
 	switch (http_status) {
 		case FORBIDDEN:
 			*response_size = snprintf(response, *response_size, "HTTP/1.1 %d Forbidden\r\n", FORBIDDEN);
 			break;
+		case REQUEST_OK:
+			*response_size = snprintf(response, *response_size, "HTTP/1.1 %d OK\r\n", REQUEST_OK);
+			break;
 		default:
+			fprintf(stderr, "HTTP Status %d not implemented\n", http_status);
+			exit(EXIT_FAILURE);
 			break;
 	}
 }
@@ -74,6 +111,7 @@ int check_if_forbidden(forbidden_sites_list *list, char *url) {
 	printf("\nChecking URL: '%s'\n\n", url);
 
 	for (size_t i = 0; i < list->len; i++) {
+		printf("Testing URL:  %s | URL in the list: %s\n", url, list->sites[i]);
 		if (strstr(url, list->sites[i]) != NULL) {
 			printf("Forbidden URL found at %lu: '%s'\n", i, list->sites[i]);
 			return 1;
@@ -184,24 +222,20 @@ int main(int argc, char *argv[]) {
 		}
 
 		// Read the request (we just clear the buffer for this simple example)
-		char request_line[BUFFER_SIZE];
-		response_size = read(client_fd, request_line, BUFFER_SIZE - 1);
-		request_line[response_size] = '\0';
+		http_request req;
+		req.request_size = read(client_fd, req.request_line, BUFFER_SIZE - 1);
+		make_request(&req);
 
 		char time_buf[32];
 
 		get_timestamp(time_buf);
-		char *end_of_response_string = strchr(request_line, '\r');
-		end_of_response_string[0] = '\0';
 
-		if (check_if_forbidden(&list, strchr(request_line, ' ') + 1)) {
+		if (check_if_forbidden(&list, req.domain)) {
 			printf("Forbidden website, returning response 403 Forbidden\n");
 			http_status = FORBIDDEN;
 			response_size = sizeof(response);
 			make_response_string(response, &response_size, http_status);
 		} else {
-			end_of_response_string[0] = '\r';
-
 			const struct addrinfo hints = {
 				.ai_family = AF_INET,
 				.ai_socktype = SOCK_STREAM,
@@ -245,12 +279,17 @@ int main(int argc, char *argv[]) {
 					printf("Connect OK\n");
 				}
 
-				if (send(request_fd, request_line, response_size, 0) < 0) {
+				response_size = sizeof(response);
+				//fprintf(stderr, "Before send\nResponse: %s\nHTTP Status: %d\n", req.request_line, http_status);
+
+				if (send(request_fd, req.request_line, req.request_size, 0) < 0) {
 					perror("Failed to send request\n");
 					close(request_fd);
 					http_status = GATEWAY_TIMEOUT;
 				} else {
+					//fprintf(stderr, "After send before recv\n");
 					bytes_recv = recv(request_fd, response, sizeof(response) - 1, 0);
+					//fprintf(stderr, "After recv\n");
 					if (bytes_recv >= 0) {
 						response[bytes_recv] = '\0';
 						response_size = bytes_recv;
@@ -265,7 +304,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		// date client_ip "request_line" http_status response_size
-		fprintf(log_fd, "%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), request_line, http_status, response_size);
+		fprintf(log_fd, "%s %s \"%s\" %d %lu\n", time_buf, inet_ntoa(client_addr.sin_addr), req.header, http_status, response_size);
 		fflush(log_fd);
 
 		printf("%s\n", response);
