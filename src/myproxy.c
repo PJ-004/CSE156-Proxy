@@ -9,6 +9,14 @@
 #include <errno.h>
 #include <netinet/in.h>
 
+//#define ENABLE_DEBUG
+
+#ifdef ENABLE_DEBUG
+#define DEBUG(FORMAT, ...) fprintf(stderr, FORMAT, __VA_ARGS__)
+#else
+#define DEBUG(FORMAT, ...)
+#endif
+
 #define BUFFER_SIZE 2048
 #define MAX_FORBIDDEN_SITES 256
 #define MAX_URL_LEN 256
@@ -61,7 +69,13 @@ typedef struct {
 	char header[BUFFER_SIZE];
 	char method[5];
 	char domain[MAX_URL_LEN];
+	char url[MAX_URL_LEN];
 } http_request;
+
+void make_domain_string(char *domain, char *url) {
+	strcpy(domain, url + 7);
+	strchr(domain, '/')[0] = '\0';
+}
 
 int make_request(http_request *req) {
 	req->request_line[req->request_size] = '\0';
@@ -73,9 +87,11 @@ int make_request(http_request *req) {
 	end_of_response_string[0] = '\r';
 	//fprintf(stderr, "Header: %s\n", req->header);
 
-	strcpy(req->domain, strchr(req->header, ' ') + 1);
-	strchr(req->domain, ' ')[0] = '\0';
-	//fprintf(stderr, "Domain: %s\n", req->domain);
+	strcpy(req->url, strchr(req->header, ' ') + 1);
+	strchr(req->url, ' ')[0] = '\0';
+	DEBUG("URL: %s\n", req->url);
+	make_domain_string(req->domain, req->url);
+	DEBUG("Domain: %s\n", req->domain);
 
 	char *end_of_method_string = strchr(req->header, ' ');
 	end_of_method_string[0] = '\0';
@@ -243,9 +259,8 @@ int main(int argc, char *argv[]) {
 			struct addrinfo *result;
 			struct in_addr *addr;
 
-			char hostname[] = "www.google.com";
 			char port_str[] = "80";
-			int status = getaddrinfo(hostname, port_str, &hints, &result);
+			int status = getaddrinfo(req.domain, port_str, &hints, &result);
 
 			if (status != 0) {
 				if (status == EAI_SERVICE) {
@@ -254,7 +269,7 @@ int main(int argc, char *argv[]) {
 				}
 
 				if (status == EAI_NONAME || status == EAI_NONAME) {
-					fprintf(stderr, "Error: Hostname '%s' does not exist.\n", hostname);
+					fprintf(stderr, "Error: Hostname '%s' does not exist.\n", req.domain);
 					http_status = BAD_GATEWAY;
 				} else if (status == EAI_FAMILY) {
 					fprintf(stderr, "Error: Invalid IP address format.\n");
